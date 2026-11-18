@@ -321,17 +321,67 @@ export async function loadCommerceLazy() {
  * Initializes commerce configuration
  */
 export async function initializeCommerce() {
-  // Initialize Config
-  initializeConfig(await getConfigFromSession());
+  const config = await getConfigFromSession();
 
-  // Set Fetch GraphQL (Core)
-  CORE_FETCH_GRAPHQL.setEndpoint(getConfigValue('commerce-core-endpoint') || await getConfigValue('commerce-endpoint'));
-  CORE_FETCH_GRAPHQL.setFetchGraphQlHeaders((prev) => ({ ...prev, ...getHeaders('all') }));
+  // 1. Extraemos las entradas del JSON de da.live
+  const rawData = config && config.data ? config.data : [];
 
-  // Set Fetch GraphQL (Catalog Service)
-  CS_FETCH_GRAPHQL.setEndpoint(await commerceEndpointWithQueryParams());
-  CS_FETCH_GRAPHQL.setFetchGraphQlHeaders((prev) => ({ ...prev, ...getHeaders('cs') }));
+  // 2. Convertimos el array [{key, value}] a un objeto de variables
+  const configMap = {};
+  if (Array.isArray(rawData)) {
+    rawData.forEach((item) => {
+      if (item && item.key) {
+        configMap[item.key] = item.value;
+      }
+    });
+  }
 
+  // Fallbacks si falta algo en la hoja de da.live
+  const endpoint = configMap['commerce-core-endpoint']
+    || configMap['commerce-endpoint']
+    || 'https://venia.magento.com/graphql';
+  const storeView = configMap['commerce-store-view-code'] || 'default';
+
+  // 3. ESTRUCTURA EXACTA que exige configs.js (propiedad 'public' con 'default')
+  const formattedConfig = {
+    public: {
+      default: {
+        'commerce-endpoint': endpoint,
+        'commerce-core-endpoint': endpoint,
+        'commerce-store-view-code': storeView,
+        'commerce-graphql-endpoint': configMap['commerce-graphql-endpoint'] || '/graphql',
+        ...configMap
+      }
+    },
+    headers: {
+      all: {
+        Store: storeView
+      }
+    }
+  };
+
+  // 4. Inicializamos la librería entregando el objeto estructurado
+  initializeConfig(formattedConfig);
+
+  // 5. Asignamos endpoints a GraphQL Fetchers
+  if (CORE_FETCH_GRAPHQL) {
+    CORE_FETCH_GRAPHQL.setEndpoint(endpoint);
+    CORE_FETCH_GRAPHQL.setFetchGraphQlHeaders((prev) => ({
+      ...prev,
+      ...getHeaders('all')
+    }));
+  }
+
+  if (CS_FETCH_GRAPHQL) {
+    const csEndpoint = (await commerceEndpointWithQueryParams().catch(() => null)) || endpoint;
+    CS_FETCH_GRAPHQL.setEndpoint(csEndpoint);
+    CS_FETCH_GRAPHQL.setFetchGraphQlHeaders((prev) => ({
+      ...prev,
+      ...getHeaders('cs')
+    }));
+  }
+
+  // 6. Carga de Drop-ins
   return initializeDropins();
 }
 
